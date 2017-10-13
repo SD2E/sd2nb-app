@@ -79,11 +79,13 @@ sd2eadm-ReadMeRNA_execution_script.ipynb
 
 4. Share your notebook with an individual user and add additional users to share
 
+IMPORTANT: If your notebook has spaces in the name, please put the notebook name in double quotes, it will replace spaces with underscores.
+
 ```shell
 
 # Share with a user
 # cd to a directory containing a notebook you want to share (first time only)
-% sd2nb share SharedNotebook.ipynb gzynda                                                       
+% sd2nb share "Shared Notebook.ipynb" gzynda                                                       
 File/folder does not exist                                                                                                          
 [INFO] 2017-10-13T15:59:24Z - Sharing as vaughn-SharedNotebook.ipynb...                                                             
 [INFO] 2017-10-13T15:59:28Z - Done                                                                                                  
@@ -132,4 +134,5 @@ auth-tokens-create -S
 
 ### Notebook Naming conventions ###
 
-Spaces: Please, no spaces in your notebook names now. We'll add sanitization today or tomorrow to replace_them_with_underscores before Monday 10/16
+Spaces: If using spaces in your notebook names please put the name in double quotes, it will replace it with underscores.
+
