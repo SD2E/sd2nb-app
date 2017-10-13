@@ -1,0 +1,488 @@
+#!/usr/bin/env bash
+
+CMD=$1
+NOTEBOOK=$2
+DESTPATH=$3
+DEBUG=
+
+function log(){
+    mesg "INFO" $@
+}
+
+function debug(){
+    if [ "$DEBUG" == 1 ]
+    then
+        mesg "DEBUG" $@
+    fi
+}
+
+function die() {
+    mesg "ERROR" $@
+    exit 1
+}
+
+function fail() {
+    echo "$@" >&2
+    exit 1
+}
+
+function mesg() {
+    lvl=$1
+    shift
+    message=$@
+    echo "[$lvl] $(utc_date) - $message" >&2
+}
+
+function utc_date() {
+    echo $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+}
+
+function urandom_int(){
+    # Poll built-in ultrarandom generator to return an integer
+    #   Optional: $1 is max byte width of for result
+    
+    # Source
+    #   http://www.linuxnix.com/generate-random-number-bash/
+    # Whitespace cleanup
+    #   Using tr avoids MacOS-specific behavior in sed and awk
+    local _bytes=$1
+    if [ -z "${_bytes}" ] || [ "${_bytes}" -le 0 ]; then _bytes=4; fi
+    local _result=$(od -An -N${_bytes} -tu4 < /dev/urandom | tr -d "\n"  | tr -d " ")
+    echo "${_result}"
+}
+
+function shortid(){
+    # Generate a fairly random shortid
+    # Ideal for making app and system names unique
+    # without subjecting users to UUID4 shenanigans
+    local _uint=$(urandom_int)
+    encode_hashid "${_uint}"
+}
+
+function encode_hashid(){
+    # Create a hashid from a positive integer
+    local _salt="What starts here changes the world"
+    local _intval=$1
+    if [ -z "${_intval}" ] || [ "${_intval}" -le 0 ]; then _intval=0; fi
+    echo $(${UTIL_DIR}/bashids -e -s "$_salt" -l 6 $_intval)
+}
+
+function decode_hashid(){
+    # Decode a hashid back to its positive integer value
+    local _salt="What starts here changes the world"
+    local _hashid=$1
+    if [ -n "${_hashid}" ]
+    then
+        echo $(${UTIL_DIR}/bashids -d -s "$_salt" $_hashid)
+    else
+        echo ""
+    fi
+}
+
+if [ -z "$CMD" ] && [ -z "$NOTEBOOK" ]
+then
+    do_usage
+fi
+
+function refresh_auth() {
+
+    auth-tokens-refresh -S > /dev/null 2>&1
+    if [ ! $? == 0 ]
+    then
+        log "Your API credentials have expired. We will now ask for your password to restore them..."
+        auth-tokens-create -S
+        if [ ! $? == 0 ]
+        then
+            log "Authentication was unsuccessful. Try re-rerunning $_THIS $CMD again or seeking assistance."
+            get_help
+        fi
+   fi
+   return 0
+}
+
+function _nb_not_uploaded() {
+    
+    local nbname=$1
+    local checkit=
+    debug "_nb_not_uploaded.nbname: $nbname"
+    
+    checkit=$(files-list --limit 1 -S ${_AGAVE_PUB_SYS} ${_AGAVE_PATH}/${nbname} | wc -l)
+    debug "_nb_not_uploaded.checkit: $checkit"
+    
+    return $checkit
+}
+
+function _encode_namespace {
+    
+    local nbname=$1
+    local newnbname=
+    debug "_encode_namespace.nbname: $nbname"
+    
+    if [[ ! "$nbname" == *.ipynb ]]
+    then
+        nbname="$nbname.ipynb"
+        debug "_encode_namespace.nbname: $nbname"
+    fi
+        
+    debug "_encode_namespace - Checking for $JPY_USER"
+    # Do we need to prepend uname- to notebook?
+    if ! egrep -q "^${JPY_USER}-" <<< $nbname
+    then
+        newnbname="${JPY_USER}-$nbname"
+        debug "Notebook will be referred to as $newnbname when shared"
+    else
+        newnbname=$nbname
+        debug "_encode_namespace.newnbname: $newnbname"
+    fi
+    
+    echo $newnbname
+
+}
+
+function _get_fullname() {
+    
+    local uname=$1
+    local profile=
+    
+    debug "_get_fullname: $uname"
+    if [ "$uname" == "${_DEFAULT_AGAVE_USER}" ]
+    then
+        profile="Authorized Users"
+    elif [ "$uname" == "world" ]
+    then
+        profile="World Wide Web"
+    else
+        profile=$(profiles-list -v $uname | jq -r '. | "\(.first_name) \(.last_name)"')
+    fi
+    echo $profile
+}
+
+function _get_shares() {
+
+    # Only accepts repository filenames
+    local nbname=$1
+    local pem=${2-READ}
+    
+    local newnbname=$1
+    local shares_all=
+    
+    debug "_get_shares.nbname: $nbname"
+    # the filter against EXECUTE excludes tenant admins
+    shares_all=$(files-pems-list -p $pem -S ${_AGAVE_PUB_SYS} ${_AGAVE_PATH}/${nbname} | egrep -v "EXECUTE" | awk '{print $1}' | sort -k1 | tr '\n' ' ' )
+    
+    echo "$shares_all"
+
+}
+
+function get_help() {
+
+    echo "Request assistance from the SD2E team at support@sd2e.org"
+    exit 1
+}
+
+function do_usage() {
+   echo -e "usage: $_THIS command notebook (modifier)\n"
+   echo -e "  $_THIS list - Show available notebooks"
+   echo -e "  $_THIS search keyword - Find notebooks matching 'keyword'"
+   echo -e "  $_THIS get notebook - Import a notebook to $HOME/tacc-work/sd2nb/"
+   echo -e "  $_THIS share notebook (username) - Default is to share with everyone"
+   echo -e "  $_THIS unshare notebook (username) - Default is to unshare with everyone\n"
+   echo -e "  $_THIS shares notebook - List shares for a given notebook\n"
+   echo -e "Email support@sd2e.org for technical assistance"
+}
+
+function do_list() {
+
+    debug "do_list"
+    local nbs=$(files-list --limit 250 -v -S ${_AGAVE_PUB_SYS} ${_AGAVE_PATH} | jq -r .[].name | grep -v "^.$")
+    for nb in $nbs
+    do
+        nb2=$(basename $nb .ipynb)
+        echo $nb2
+    done 
+}
+
+function do_search() {
+    
+    local searchterm=$1
+    
+    local nblist=
+    local nbmatch=
+    
+    debug "do_search.searchterm: $searchterm"
+    if [ -z "$searchterm" ];
+    then
+        fail "usage: sd2nb search <string>"
+    fi
+    
+    nblist=$(do_list)
+    nbmatch=$(egrep -i -e "$searchterm" <<< $nblist)
+    if [ -z "$nbmatch" ]
+    then
+        fail "No notebooks matched $searchterm"
+    fi
+    
+    echo $nbmatch
+
+}
+
+function do_get() {
+
+    local nbname=$1
+    local destpath=$2
+    
+    debug "do_get.nbname: $nbname"
+    debug "do_get.destpath: $destpath"
+    
+    if [ -z "$nbname" ];
+    then
+        fail "usage: sd2nb get notebook [local destination]"
+    fi
+    if [ -z "$destpath" ];
+    then
+        destpath="${_DEFAULT_LOCAL_DEST}"
+    fi
+    
+    debug "do_get - Ensuring $destpath exists"
+    mkdir -p $destpath && chmod -f g+rwxs $destpath
+    
+    if [ -d "$destpath" ]
+    then
+        # Back up if already in there
+        if [ -f "$destpath/${nbname}.ipynb" ]
+        then
+            slug=$(shortid)
+            mv -f $destpath/${nbname}.ipynb $destpath/${nbname}-${slug}.ipynb && \
+            files-pems-update -q -u $JPY_USER -p ALL -S ${_AGAVE_PRIV_SYS} ${_AGAVE_PATH}/${nbname}-${slug}.ipynb && \
+            log "Renamed existing local notebook to ${nbname}-${slug}"
+        fi
+        
+        log "Importing to ${destpath}..."
+        files-get -q -S ${_AGAVE_PUB_SYS} -N $destpath/${nbname}.ipynb ${_AGAVE_PATH}/${nbname}.ipynb
+        log "Done"
+    fi
+   
+}
+
+function _do_grant(){
+
+    local nbname=$1
+    local uname=$2
+    local pem=${3-READ}    
+    local newnbname=
+    
+    debug "do_grant.nbname: $nbname"
+    debug "do_grant.uname: $uname"
+    debug "do_grant.pem: $pem"
+
+    local newnbname=$(_encode_namespace $nbname)
+    
+    files-pems-update -q -S ${_AGAVE_PUB_SYS} -u $uname -p $pem ${_AGAVE_PATH}/$newnbname
+  
+    if [ "${uname}" == "${_DEFAULT_AGAVE_USER}" ]
+    then
+       log "$pem granted on $nbname to everyone"    
+    else
+       log "$pem granted on $nbname to $uname"
+    fi
+    
+}
+
+function _do_drop(){
+
+    # Remove Agave ACL share from anyone but
+    # public user by setting to NONE. If public
+    # user specified drop all ACLs.
+
+    local nbname=$1
+    local uname=$2
+    local pem=NONE
+    
+    debug "do_drop.nbname: $nbname"
+    debug "do_drop.uname: $uname"
+    debug "do_drop.pem: $pem"
+    
+    local newnbname=$(_encode_namespace $nbname)
+    
+    if [ ! "${uname}" == "${_DEFAULT_AGAVE_USER}" ]
+    then
+       debug "do_drop - files-pems-update:$uname:$pem:$newnbname"
+       files-pems-update -q -S ${_AGAVE_PUB_SYS} -u $uname -p $pem ${_AGAVE_PATH}/$newnbname
+       log "Unshared $nbname from $uname"    
+    else
+        debug "do_drop - files-pems-delete:$newnbname"
+        # files-pems-delete doesn't work reliably - instead, as much as it burns
+        # enumerate all shares and delete one by one
+        
+        files-pems-delete -q -S ${_AGAVE_PUB_SYS} ${_AGAVE_PATH}/$newnbname
+        log "Unshared $nbname with everyone"
+    fi
+
+}
+
+function do_share() { 
+
+    # Upload a given notebook to the repository
+    # Share it either with a specific user or
+    # the whole project using Agave ACLs
+    #
+    # If invoked from a directory where $nbname 
+    # is present, upload it again, over-writing
+    # the repository file but maintaining any
+    # existing ACL shares
+
+    local nbname=$1
+    local uname=$2
+    local newnbname=
+
+    debug "do_share.nbname: $nbname"
+    debug "do_share.uname: $uname"
+    
+    if [ -z "$nbname" ];
+    then
+        fail "usage: sd2nb share notebook [username]"
+    fi
+    
+    if [ -z "$uname" ];
+    then
+        uname="${_DEFAULT_AGAVE_USER}"
+        debug "do_share - defaulting to ${_DEFAULT_AGAVE_USER}"
+    fi
+    
+    newnbname=$(_encode_namespace $nbname)
+    
+    debug "do_share - Check if uploaded already:"
+    # Now, has the notebook already been shared?
+    if _nb_not_uploaded $newnbname
+    then
+        # Upload it
+        debug "do_share - We think it was not"
+        log "Sharing as ${newnbname}..."
+        if [ -f $nbname ]
+        then
+            files-upload -q -F $nbname --filename $newnbname -S ${_AGAVE_PUB_SYS} ${_AGAVE_PATH}
+        else
+            fail "$nbname wasn't found in the current directory. Since it's never been uploaded to the repository, sharing it isn't possible right now."
+        fi
+        log "Done"
+    fi
+    
+    _do_grant $newnbname $uname READ
+    
+}
+
+function do_unshare() { 
+    
+    # Drops READ ACL on a given repository notebook
+    # Does not delete notebook from repository
+    
+    local nbname=$1
+    local uname=$2
+    local newnbname=
+
+    debug "do_unshare.nbname: $nbname"
+    debug "do_unshare.uname: $uname"
+    
+    if [ -z "$nbname" ];
+    then
+        fail "usage: sd2nb unshare notebook [username]"
+    fi
+    
+    if [ -z "$uname" ];
+    then
+        uname="${_DEFAULT_AGAVE_USER}"
+    fi
+    
+    newnbname=$(_encode_namespace $nbname)
+    
+    _do_drop $nbname $uname 
+    
+}
+
+function do_list_shares() {
+
+    # For a given notebook name, list out
+    # people who have been given READ ACL
+
+    local nbname=$1
+    local newnbname=
+    local shares=
+    
+    debug "do_list_shares.nbname: $nbname"
+    
+    if [ -z "$nbname" ];
+    then
+        fail "usage: sd2nb shares notebook"
+    fi
+    
+    newnbname=$(_encode_namespace $nbname)
+    
+    shares=$(_get_shares $newnbname)
+    
+    for U in $shares
+    do
+        fullname=$(_get_fullname $U)
+        echo -e "$fullname\t$U"
+    done
+}
+
+_AGAVE_PUB_SYS=data-sd2e-community
+_AGAVE_PATH=sample/jupyter/notebooks
+_AGAVE_PRIV_PATH="/sd2nb"
+_AGAVE_PRIV_SYS=data-tacc-work-${JPY_USER}
+_DEFAULT_LOCAL_DEST="$HOME/tacc-work/sd2nb"
+_DEFAULT_AGAVE_USER="public"
+_THIS=$(basename $0)
+VERSION=0.1
+UTIL_DIR=$HOME/bin/
+
+case $CMD in
+    usage)
+        do_usage
+        ;;
+    list)
+        refresh_auth
+        do_list
+        ;;
+    search)
+        shift
+        KEYWORD=$1
+        refresh_auth
+        do_search $KEYWORD
+        ;;
+    get)
+        shift
+        NB=$1
+        shift
+        DEST=$1
+        refresh_auth
+        do_get $NB $DEST
+        ;;
+    share)
+        shift
+        NBPATH=$1
+        shift
+        UNAME=$1
+        refresh_auth
+        do_share $NBPATH $UNAME
+        ;;
+    unshare)
+        shift
+        NBPATH=$1
+        shift
+        UNAME=$1
+        refresh_auth
+        do_unshare $NBPATH $UNAME
+        ;;
+    shares)
+        shift
+        NB=$1
+        refresh_auth
+        do_list_shares $NB
+        ;;
+    *)
+        do_usage
+        ;;
+esac
+
+
