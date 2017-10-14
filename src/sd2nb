@@ -434,7 +434,9 @@ _DEFAULT_LOCAL_DEST="$HOME/tacc-work/sd2nb"
 _DEFAULT_AGAVE_USER="public"
 _THIS=$(basename $0)
 VERSION=0.1
-UTIL_DIR=$HOME/bin/
+if [[ -z "$UTIL_DIR" ]]; then
+    UTIL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+fi
 
 case $CMD in
     usage)
