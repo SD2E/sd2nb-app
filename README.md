@@ -1,4 +1,4 @@
-# Instructions for Sharing Jupyter Notebooks with SD2E
+# Instructions for Sharing Jupyter Notebooks within SD2E
 
 ## Access SD2E Portal
 
@@ -126,7 +126,7 @@ cd $HOME/directory-where-notebook-lives
 
 ### Invalid Credentials ###
 
-Auth: If you get this error *Invalid Credentials* and a failure, we've failed to automatically update your API session. For now, just run the following, providing your TACC password when asked. It should give you at least 4 hours of valid session.
+Auth: If you get this error *Invalid Credentials* and a failure, we've failed to automatically update your API session. Running the following command will remedy this situation: 
 
 ```shell
 auth-tokens-create -S
@@ -134,5 +134,4 @@ auth-tokens-create -S
 
 ### Notebook Naming conventions ###
 
-Spaces: If using spaces in your notebook names please put the name in double quotes, it will replace it with underscores.
-
+Spaces: If using spaces in your notebook names please put the name in "double quotes". We will replace them with underscores in the filename registered with the notebook repository. 
