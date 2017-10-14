@@ -184,10 +184,11 @@ function do_usage() {
    echo -e "usage: $_THIS command notebook (modifier)\n"
    echo -e "  $_THIS list - Show available notebooks"
    echo -e "  $_THIS search keyword - Find notebooks matching 'keyword'"
-   echo -e "  $_THIS get notebook - Import a notebook to $HOME/tacc-work/sd2nb/"
+   echo -e "  $_THIS get notebook - Import a notebook to $HOME/tacc-work/sd2nb/ put quotes around notebook name"
    echo -e "  $_THIS share notebook (username) - Default is to share with everyone"
    echo -e "  $_THIS unshare notebook (username) - Default is to unshare with everyone\n"
    echo -e "  $_THIS shares notebook - List shares for a given notebook\n"
+   echo -e "IMPORTANT: If sharing a notebook with spaces please include double quotes around the notebook name "
    echo -e "Email support@sd2e.org for technical assistance"
 }
 
@@ -471,6 +472,7 @@ case $CMD in
     unshare)
         shift
         NBPATH=$1
+	NBPATH=${NBPATH// /)};
         shift
         UNAME=$1
         refresh_auth
