@@ -3,8 +3,7 @@
 CMD=$1
 NOTEBOOK=$2
 DESTPATH=$3
-DEBUG=1
-JPY_USER=vaughn
+DEBUG=
 
 function log(){
     mesg "INFO" $@
@@ -482,14 +481,15 @@ function do_push_update() {
     fi
 }
 
-_AGAVE_PUB_SYS=data-sd2e-community
-_AGAVE_PATH=sample/jupyter/notebooks
-_AGAVE_PRIV_PATH="/sd2nb"
-_AGAVE_PRIV_SYS=data-tacc-work-${JPY_USER}
-_DEFAULT_LOCAL_DEST="$HOME/tacc-work/sd2nb"
-_DEFAULT_AGAVE_USER="public"
 _THIS=$(basename $0)
 VERSION=0.1.0
+_AGAVE_PUB_SYS="data-sd2e-community"
+_AGAVE_PATH="sample/jupyter/notebooks"
+_AGAVE_PRIV_PATH="/sd2nb"
+_AGAVE_PRIV_SYS="data-tacc-work-${JPY_USER}"
+_DEFAULT_LOCAL_DEST="$HOME/tacc-work/sd2nb"
+_DEFAULT_AGAVE_USER="public"
+
 if [[ -z "$UTIL_DIR" ]]; then
     UTIL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 fi
