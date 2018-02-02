@@ -14,3 +14,18 @@ Summary: Initial release for Oct working meeting
 
 ### Removed
 * Nothing
+
+## Version 0.2.0
+
+Summary: Fixes to support new Jupyter environment and enhance robustness
+
+### Added
+* Nothing
+
+### Changed
+* Username read from Agave credential file
+* The get and share commands are robust to .ipynb extension in notebook names
+* Token refresh only happens when the token is near expiration
+
+### Removed
+* Nothing

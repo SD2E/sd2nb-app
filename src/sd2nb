@@ -84,19 +84,70 @@ then
     do_usage
 fi
 
+function get_username() {
+    # Get current Agave username
+    _get_kval_agave_current "username"
+
+}
+
+function get_access_token_remaining_time() {
+    # Compute remaining token time
+    local created=$(_get_kval_agave_current "created_at")
+    local duration=$(_get_kval_agave_current "expires_in")
+    local curtime=$(date "+%s")
+    local token_age="$(($curtime-$created))"
+    echo $((duration-$token_age))
+
+}
+
+function _get_kval_agave_current() {
+    # Constrained shell-native parser for 
+    # pulling values out of the user's agave 
+    # identity file
+    keyname=$1
+    if [ -f "$HOME/.agave/current" ]
+    then
+        value=$(cat $HOME/.agave/current | sed 's/\\\\\//\//g' | sed 's/[{}]//g' | \
+            awk '{n=split($0,a,","); for (i=1; i<=n; i++) print a[i]}' | \
+            grep $keyname | awk -F ":" '{print $2}' | tr -d \")
+        echo $value
+        return 0
+    fi
+    echo ""
+    return 1
+
+    # NOTE: Verified portable on MacOSX 10.12, Alpine3.6, Centos7, Ubuntu16
+
+}
+
+# TODO - Use expires timer to determine whether we _might_ need to refresh
 function refresh_auth() {
 
-    auth-tokens-refresh -S > /dev/null 2>&1
-    if [ ! $? == 0 ]
-    then
-        log "Your API credentials have expired. We will now ask for your password to restore them..."
-        auth-tokens-create -S
+    local remain=$(get_access_token_remaining_time)
+    debug "refresh_auth.get_access_token_remaining_time: access_token expires in $remain seconds"
+    # keep an eye on this - if tokens are expiring before 
+    # their expected time, need to bump up the buffer from 600s
+    # or allow passing of a force parameter
+    if (($remain < 600 ))
+        then
+
+        auth-tokens-refresh -S >/dev/null 2>&1
         if [ ! $? == 0 ]
         then
-            log "Authentication was unsuccessful. Try re-rerunning $_THIS $CMD again or seeking assistance."
-            get_help
-        fi
+            log "Your API credentials cannot be automatically refreshed."
+            auth-tokens-create -S
+            if [ ! $? == 0 ]
+            then
+                log "Authentication was unsuccessful. Try re-rerunning $_THIS $CMD again or seek assistance."
+                get_help
+            fi
+       fi
    fi
+
+   # set globals everytime - its harmless to do so
+   _AGAVE_USERNAME=$(get_username)
+   _AGAVE_PRIV_SYS="data-tacc-work-${_AGAVE_USERNAME}"
+
    return 0
 }
 
@@ -116,6 +167,7 @@ function _encode_namespace {
     
     local nbname="$1"
     local newnbname=
+    local AGAVE_USER=$(get_username)
     debug "_encode_namespace.nbname: $nbname"
     
     if [[ ! "$nbname" == *.ipynb ]]
@@ -124,12 +176,12 @@ function _encode_namespace {
         debug "_encode_namespace - Appended .ipynb"
     fi
     
-    debug "_encode_namespace - Checking for $JPY_USER"
+    debug "_encode_namespace - Checking for $AGAVE_USER"
     # Do we need to prepend uname- to notebook?
-    if ! egrep -q "^${JPY_USER}-" <<< $nbname
+    if ! egrep -q "^${AGAVE_USER}-" <<< $nbname
     then
-        debug "_encode_namespace - prepended ${JPY_USER}-"
-        newnbname="${JPY_USER}-$nbname"
+        debug "_encode_namespace - prepended ${AGAVE_USER}-"
+        newnbname="${AGAVE_USER}-$nbname"
     else
         newnbname=$nbname
     fi
@@ -183,7 +235,7 @@ function _get_shares() {
 
 function get_help() {
 
-    echo "Request assistance from the SD2E team at support@sd2e.org"
+    echo "Get help from the SD2E team at support@sd2e.org"
     exit 1
 }
 
@@ -225,10 +277,10 @@ function do_search() {
     fi
     
     nblist=$(do_list)
-    nbmatch=$(egrep -i -e "$searchterm" <<< $nblist)
+    nbmatch=$(echo $nblist | tr " " "\n" | egrep -i -e "$searchterm")
     if [ -z "$nbmatch" ]
     then
-        fail "No notebooks matched $searchterm"
+        fail "No shared notebooks matched $searchterm"
     fi
     
     for NB in $nbmatch
@@ -238,6 +290,8 @@ function do_search() {
 
 }
 
+# TODO - Make get resilient to appending .ipynb to notebook name
+
 function do_get() {
 
     local nbname=$1
@@ -245,7 +299,8 @@ function do_get() {
     
     debug "do_get.nbname: $nbname"
     debug "do_get.destpath: $destpath"
-    
+    local AGAVE_USER=$(get_username)
+
     if [ -z "$nbname" ];
     then
         fail "usage: sd2nb get notebook [local destination]"
@@ -255,6 +310,9 @@ function do_get() {
         destpath="${_DEFAULT_LOCAL_DEST}"
     fi
     
+    # preemptively trim .ipynb from end
+    nbname=$(basename $nbname .ipynb)
+
     debug "do_get - Ensuring $destpath exists"
     mkdir -p $destpath && chmod -f g+rwxs $destpath
     
@@ -265,7 +323,7 @@ function do_get() {
         then
             slug=$(shortid)
             mv -f $destpath/${nbname}.ipynb $destpath/${nbname}-${slug}.ipynb && \
-            files-pems-update -q -u $JPY_USER -p ALL -S ${_AGAVE_PRIV_SYS} ${_AGAVE_PATH}/${nbname}-${slug}.ipynb && \
+            files-pems-update -q -u $AGAVE_USER -p ALL -S ${_AGAVE_PRIV_SYS} ${_AGAVE_PATH}/${nbname}-${slug}.ipynb && \
             log "Renamed existing local notebook to ${nbname}-${slug}"
         fi
         
@@ -482,11 +540,12 @@ function do_push_update() {
 }
 
 _THIS=$(basename $0)
-VERSION=0.1.0
+VERSION=0.2.0
 _AGAVE_PUB_SYS="data-sd2e-community"
 _AGAVE_PATH="sample/jupyter/notebooks"
 _AGAVE_PRIV_PATH="/sd2nb"
-_AGAVE_PRIV_SYS="data-tacc-work-${JPY_USER}"
+_AGAVE_PRIV_SYS=
+_AGAVE_USERNAME=
 _DEFAULT_LOCAL_DEST="$HOME/tacc-work/sd2nb"
 _DEFAULT_AGAVE_USER="public"
 
